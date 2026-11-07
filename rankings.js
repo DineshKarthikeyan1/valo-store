@@ -21,130 +21,114 @@ const LAST_CALL_H = 3;      // favourites also get a last-chance ping this close
 // S = 91-95, A+ = 87-90, A = 82-86, B = 76-81, C = below 76.
 // Delete a line to go back to the community score for that collection.
 const YOUR_OVERRIDES = {
-  'Ayakashi': 93,          // S   (community: A, 86)
-  'ORA': 93,               // S   (community: C, 73)
-  'Prelude to Chaos': 91,  // S   (community: S, 91 - agrees)
-  'Champions 2024': 91,    // S   (community: S, 91 - agrees)
-  'Champions 2025': 91,    // S   (community: A+, 87)
-  'Champions 2026': 91,    // S   (community: A, 85)
-  'Elderflame': 89,        // A+  (community: S, 92)
-  'Neo Frontier': 87,      // A+  (community: B, 78)
-  'Bubblegum Deathwish': 87, // A+ (community: C, 74)
-  'Champions 2021': 85,    // A   (community: S, 94)
+  'Ayakashi': 93,          // S   (votes: A+, 88)
+  'ORA': 93,               // S   (votes: B, 76)
+  'Prelude to Chaos': 91,  // S   (votes: S, 95)
+  'Champions 2024': 91,    // S   (votes: S, 92)
+  'Champions 2025': 91,    // S   (votes: A+, 88)
+  'Champions 2026': 91,    // S   (no vote data yet)
+  'Elderflame': 89,        // A+  (votes: A, 83)
+  'Neo Frontier': 87,      // A+  (votes: A, 82)
+  'Bubblegum Deathwish': 87, // A+ (no vote data)
+  'Champions 2021': 85,    // A   (votes: S, 94)
 };
 
-// ---- Community consensus collection scores (0-100) ----
-// Built from 16 rankings (Nov 2026): ranked articles and tier lists from 2025-26,
-// the VLR.gg community skinline ranking, Premate live popularity data, popularity/sales
-// rankings, and several knife tier lists. Collections near the top of many lists score
-// high; polarising ones (top in some, bottom in others) land in the middle.
-// "limited data" = released in 2026, too new for most rankings.
-const DEFAULT_SCORE = 75;
+// ---- Community collection scores (0-100), from VOTE DATA ONLY ----
+// No single-author articles. Every number below comes from aggregated votes:
+//   Premate.gg   - Elo from 50,000+ head-to-head votes (100k+ votes per top Vandal)
+//   SkinRanks.gg - Elo from head-to-head votes (10k-17k votes per Vandal)
+//   DailyVal     - star ratings (3k-10k ratings per skin)
+//   300k-vote knife poll (Sep 2025)
+// A collection's score comes mostly from how its Vandal/Phantom/knife place in those votes.
+// Collections marked "no vote data" weren't in any vote dataset I could read: they sit at
+// a neutral 78 and show as "no vote data" on the Rankings page. Override them if you like.
+const DEFAULT_SCORE = 78;
+const NO_VOTE_DATA = 78;
 const COMMUNITY = {
   // S
-  'RGX 11z Pro': 95,         // top 3 in almost every list
-  'Champions 2021': 94,      // Vandal + Karambit are all-time favourites
-  'Glitchpop': 93,
-  'Elderflame': 92,          // most popular bundle by sales; a few lists dislike it
-  'Kuronami': 92,
-  'Prelude to Chaos': 91,    // #1 Vandal on Premate popularity
-  'Champions 2024': 91,      // #1 Phantom on Premate popularity
+  'Prelude to Chaos': 95,  // Premate #1 Vandal; SkinRanks #4-5; DailyVal 4.8 (8.4k)
+  'Champions 2021': 94,    // Premate #2 Vandal; SkinRanks #2; Premate #3 knife
+  'Kuronami': 94,          // Premate #3 Vandal; SkinRanks #8; DailyVal 4.7; #1 knife in 3 votes
+  'Primordium': 93,        // SkinRanks #1 Vandal; Premate #4; DailyVal 4.8 (7.1k)
+  'RGX 11z Pro': 93,       // SkinRanks #11 Vandal; DailyVal 4.7; Premate #1 knife
+  'Champions 2024': 92,    // Premate #1 Phantom
   // A+
-  'Champions 2023': 90,
-  'Araxys': 90,
-  'Champions 2022': 90,
-  'Protocol 781-A': 88,
-  'Sentinels of Light': 88,
-  'Champions 2025': 87,
-  'Spectrum': 87,            // Phantom and Waveform rated highly; rest of bundle mid
+  'Araxys': 90,            // SkinRanks #15 Vandal; Operator beats Ion head-to-head
+  'Ayakashi': 88,          // Premate #3 Phantom (only 3.3k votes - newer)
+  'Champions 2023': 88,    // SkinRanks #23 Vandal
+  'Champions 2025': 88,    // DailyVal Vandal 4.6 (5.2k), Butterfly 4.7; VCT 2025 Karambit Premate #4
+  'Nocturnum': 87,         // Premate #4 Phantom
+  'Radiant Entertainment System': 87, // Premate #5 Phantom; Operator loses to Ion
   // A
-  'Radiant Entertainment System': 86,
-  'Ayakashi': 86,            // #3 Phantom on Premate popularity; limited data (2026)
-  'Primordium': 86,
-  'ChronoVoid': 85,          // polarising: top-2 Vandal in some lists, "bad" in others
-  'Champions 2026': 85,      // limited data
-  'EX.O': 84,                // called the best release of 2025 in one review
-  'Singularity': 83,
-  'Mystbloom': 83,
-  'CYRAX': 82,
-  'Evori Dreamwings': 82,
+  'Overdrive': 84,         // SkinRanks #27 Vandal
+  'Sentinels of Light': 84,// SkinRanks #29 Vandal
+  'Imperium': 83,          // SkinRanks #33 Vandal
+  'Glitchpop': 83,         // SkinRanks #37 Vandal
+  'Elderflame': 83,        // SkinRanks #38 Vandal; Operator beats Ion
+  'Singularity': 83,       // DailyVal Sheriff 4.8 (5.1k); Butterfly top-15 in 300k vote
+  'EX.O': 82,              // EX.O Edge #13 in 300k knife vote
+  'Phaseguard': 82,        // DailyVal Ghost 4.8 (3.2k)
+  'Neo Frontier': 82,      // DailyVal Sheriff 4.6 (3.7k)
   // B
-  'Nocturnum': 81,
-  'Ruination': 81,
-  'Doombringer': 80,
-  'Imperium': 79,
-  'Overdrive': 79,
-  'Neo Frontier': 78,
-  'Aeris': 78,               // limited data
-  'Blackspyre': 78,          // limited data
-  'Arcane': 77,
-  'Blackthorn': 77,          // limited data
-  'Popmonz': 77,             // limited data (Oct 2026)
-  'Magepunk': 76,
-  'Divergence': 76,
-  'Holo Meridian': 76,       // limited data
-  'Rogue': 76,               // limited data
-  // C
-  'BlastX': 75,
-  'Bubblegum Deathwish': 74, // listed among 2025's least impressive
-  'Phaseguard': 74,          // listed among 2025's least impressive
-  'ORA': 73,                 // listed among 2025's least impressive / worst tier
-  "Dolmir's Revenge": 70,
-  'SplashX': 70,
+  'Mystbloom': 79,         // Operator loses to Ion
+  'ChronoVoid': 79,        // flagship Vandal outside SkinRanks top 40
+  'SplashX': 77,           // Operator loses to Ion
+  'Divergence': 76,        // DailyVal Vandal 4.3 - lowest-rated of the most-rated skins
+  'ORA': 76,               // Operator loses to Ion 37-63
+  // No vote data available (neutral)
+  'Champions 2022': NO_VOTE_DATA,
+  'Champions 2026': NO_VOTE_DATA,
+  'Spectrum': NO_VOTE_DATA,
+  'Protocol 781-A': NO_VOTE_DATA,
+  'Evori Dreamwings': NO_VOTE_DATA,
+  'Ruination': NO_VOTE_DATA,
+  'BlastX': NO_VOTE_DATA,
+  'CYRAX': NO_VOTE_DATA,
+  'Doombringer': NO_VOTE_DATA,
+  'Arcane': NO_VOTE_DATA,
+  'Magepunk': NO_VOTE_DATA,
+  'Bubblegum Deathwish': NO_VOTE_DATA,
+  "Dolmir's Revenge": NO_VOTE_DATA,
+  'Aeris': NO_VOTE_DATA,
+  'Blackspyre': NO_VOTE_DATA,
+  'Blackthorn': NO_VOTE_DATA,
+  'Holo Meridian': NO_VOTE_DATA,
+  'Rogue': NO_VOTE_DATA,
+  'Popmonz': NO_VOTE_DATA,
+  // Niche one-offs
   'Ignite': 62,
-  'VCT': 55,
+  'VCT': 60,
 };
 
-// ---- Individual gun skins the community rates above their own collection ----
+// ---- Individual gun skins that vote above their own collection ----
 const GUN_BONUS = {
-  'Spectrum Phantom': 4,
-  'Protocol 781-A Phantom': 3,
-  'Radiant Entertainment System Phantom': 3,
-  'Ayakashi Phantom': 3,
-  'Champions 2024 Phantom': 3,
-  'Champions 2022 Phantom': 2,
-  'Champions 2023 Vandal': 3,
+  'Champions 2024 Phantom': 4,   // Premate #1 Phantom
+  'Ayakashi Phantom': 4,         // Premate #3 Phantom
+  'Nocturnum Phantom': 4,        // Premate #4 Phantom
+  'Radiant Entertainment System Phantom': 4, // Premate #5 Phantom
+  'Prelude to Chaos Vandal': 2,
   'Champions 2021 Vandal': 2,
-  'ChronoVoid Vandal': 3,
-  'Araxys Vandal': 3,
   'Kuronami Vandal': 2,
-  'Prelude to Chaos Vandal': 3,
   'Primordium Vandal': 2,
-  'Primordium Phantom': 2,
-  'Nocturnum Phantom': 3,
-  'RGX 11z Pro Vandal': 2,
-  'Elderflame Vandal': 2,
-  'Elderflame Operator': 3,
-  'Glitchpop Phantom': 1,
+  'Singularity Sheriff': 4,      // DailyVal 4.8
+  'Phaseguard Ghost': 4,         // DailyVal 4.8
+  'Neo Frontier Sheriff': 3,     // DailyVal 4.6
+  'Elderflame Operator': 3,      // beats Ion Operator head-to-head
+  'Kuronami Operator': 3,        // beats Ion Operator head-to-head
+  'Araxys Operator': 2,          // beats Ion Operator head-to-head
 };
 
-// ---- Knife community scores (knives are judged on their own, not by bundle) ----
+// ---- Knife scores from votes (knives are judged on their own) ----
+// Knives not listed fall back to their collection score.
 const KNIFE_SCORES = {
-  'Kuronami no Yaiba': 96,
-  'Champions 2021 Karambit': 95,
-  'RGX 11z Pro Blade': 93,
-  'Champions 2022 Butterfly': 93,
-  'Glitchpop Dagger': 92,
-  'Blades of Primordia': 92,
-  'EX.O Edge': 90,
-  'Champions 2023 Kunai': 88,
-  'Elderflame Dagger': 88,
-  'Mystbloom Kunai': 87,
-  'Nocturnum Scythe': 85,
-  'RGX 11z Pro Firefly': 85,
-  'Waveform': 85,
-  'Ruin Dagger': 83,
-  'Araxys Bio Harvester': 80,
-  'Singularity Butterfly': 80,
-  'Blade of Chaos': 78,
-  'Personal Administrative Melee Unit': 76,
-  'Blade of Imperium': 75,
-  'Terminus A Quo': 74,
-  'Glitchpop Axe': 74,
-  'Magepunk Sparkswitch': 70,
-  'Overdrive Blade': 69,
-  'NEO Frontier Axe': 68,
-  'BlastX Polymer': 66,
+  'RGX 11z Pro Karambit': 97,    // Premate #1 knife (80.8k votes)
+  'RGX 11z Pro Blade': 97,       // (same knife, alternate name)
+  'Kuronami no Yaiba': 96,       // Premate #2; #1 in 300k vote; DailyVal 4.8
+  'Champions 2021 Karambit': 95, // Premate #3
+  'VCT 2025 Karambit': 93,       // Premate #4
+  'Champions 2025 Butterfly': 91,// DailyVal 4.7 (3k)
+  'EX.O Edge': 87,               // #13 in 300k vote
+  'Singularity Butterfly': 86,   // #14-15 in 300k vote
 };
 
 // ---- Weapon popularity (how much a skin on that gun matters) ----
@@ -218,7 +202,7 @@ function rankSkins(skins) {
     return {
       ...s,
       collection: collection || s.theme || '',
-      rated: Boolean(collection),
+      rated: Boolean(collection) && (COLLECTIONS[collection] !== NO_VOTE_DATA || collection in YOUR_OVERRIDES),
       favourite: isFavourite(s.theme, s.name),
       score: Math.round(score * 10) / 10,
       list: knife ? 'knife' : 'gun',

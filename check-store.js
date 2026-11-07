@@ -361,7 +361,7 @@ function card(s) {
     ? `<span class="price">${s.price} VP</span> <s>${s.was}</s> <span class="off">-${s.discount}%</span>`
     : `<span class="price">${s.price} VP</span>`;
   const rank = s.rank
-    ? `<div class="rank">Rank <b>#${s.rank}</b> ${listName(s)}${s.rated ? '' : ' (unrated)'}</div>`
+    ? `<div class="rank">Rank <b>#${s.rank}</b> ${listName(s)}${s.rated ? '' : ' (no vote data)'}</div>`
     : '';
   return `
     <article class="card${top ? ' top' : ''}${s.favourite ? ' fav' : ''}" style="--tier:${colour}">
@@ -397,7 +397,7 @@ function rankTable(list, label) {
   const rows = list.map(s => `
       <tr class="${s.rank <= R.TOP_RANK ? 'top50' : ''}${s.favourite ? ' fav' : ''}${s.rank === R.TOP_RANK ? ' cut' : ''}">
         <td class="n">${s.rank}</td>
-        <td>${s.favourite ? '<span class="heart">❤ </span>' : ''}${esc(s.name)}${s.rated ? '' : ' <span class="muted">(unrated)</span>'}</td>
+        <td>${s.favourite ? '<span class="heart">❤ </span>' : ''}${esc(s.name)}${s.rated ? '' : ' <span class="muted">(no vote data)</span>'}</td>
         <td class="t" style="color:${TIER_COLOUR[s.tier]}">${esc(s.tier)}</td>
         <td class="c muted">${esc(s.collection)}</td>
       </tr>`).join('');
@@ -409,7 +409,7 @@ function rankingsPage(ranking) {
   const body = `
   <p class="muted">Every Exclusive and Ultra skin in the game, from live game data. Guns are ranked together; knives separately.
   Ranks 1–${R.TOP_RANK} (above the red line) get reminded twice a day. ❤ = your favourites (urgent alerts + last-chance ping).
-  "Unrated" = a collection not scored yet in rankings.js.</p>
+  "No vote data" = not in any vote dataset yet; sits mid-table until it is.</p>
   ${rankTable(ranking.guns, 'Guns')}
   ${rankTable(ranking.knives, 'Knives')}`;
   return shell({ title: 'Skin Rankings', active: 'rank', body });

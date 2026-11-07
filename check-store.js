@@ -79,17 +79,23 @@ async function login() {
     + '&client_id=play-valorant-web-prod'
     + '&response_type=token%20id_token&nonce=1&scope=account%20openid';
 
+  // RIOT_SSID can be just the ssid value, or the whole Cookie header ("a=1; ssid=...; b=2").
+  const cookie = SSID.includes('=') ? SSID.replace(/^cookie:\s*/i, '') : `ssid=${SSID}`;
+  if (!/(^|;\s*)ssid=/.test(cookie)) throw new LoginError('The RIOT_SSID secret has no ssid cookie in it.');
+
   const res = await fetch(authorizeUrl, {
     redirect: 'manual',
-    headers: { Cookie: `ssid=${SSID}`, 'User-Agent': USER_AGENT },
+    headers: { Cookie: cookie, 'User-Agent': USER_AGENT },
   });
   const location = res.headers.get('location') || '';
   const match = location.match(/access_token=([^&]+)/);
   if (!match) {
+    let where = '';
+    try { const u = new URL(location); where = ` Riot redirected to ${u.host}${u.pathname}.`; } catch { /* no location */ }
     const hint = res.status === 403
       ? 'Riot blocked the request from this server.'
-      : 'Your login cookie has probably expired.';
-    throw new LoginError(`Login failed (HTTP ${res.status}). ${hint}`);
+      : 'Riot did not accept the login cookie (wrong value or expired).';
+    throw new LoginError(`Login failed (HTTP ${res.status}). ${hint}${where}`);
   }
   const accessToken = decodeURIComponent(match[1]);
 

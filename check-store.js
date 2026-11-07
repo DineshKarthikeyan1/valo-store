@@ -173,14 +173,24 @@ function buildCatalog({ weapons, tiers, themes }) {
           || (s.chromas && s.chromas[0] && s.chromas[0].fullRender) || '',
         variants: skinVariants(s),
       };
+      skin.owned = R.isOwned(skin);
       for (const lvl of s.levels || []) byLevel[lvl.uuid] = skin;
       if (TOP.has(skin.tier)) topSkins.push(skin);
     }
   }
   const ranking = R.rankSkins(topSkins);
+  // Your best skin on each weapon (ranked if it's Exclusive/Ultra, otherwise unranked).
+  const ownedByWeapon = {};
+  for (const sk of Object.values(byLevel)) {
+    if (!sk.owned) continue;
+    const r = ranking.byId[sk.id];
+    const cur = ownedByWeapon[sk.weapon];
+    const rank = r ? r.rank : null;
+    if (!cur || (rank !== null && (cur.rank === null || rank < cur.rank))) ownedByWeapon[sk.weapon] = { name: sk.name, rank };
+  }
   // White weapon silhouettes for the rankings weapon tabs.
   const weaponIcons = Object.fromEntries(weapons.map(w => [w.displayName, w.killStreamIcon || w.displayIcon || '']));
-  return { byLevel, ranking, weaponIcons };
+  return { byLevel, ranking, weaponIcons, ownedByWeapon };
 }
 
 async function fetchStorefront(auth, clientVersion) {
@@ -198,7 +208,7 @@ async function fetchStorefront(auth, clientVersion) {
 }
 
 function parseStore(storefront, catalog) {
-  const { byLevel, ranking } = catalog;
+  const { byLevel, ranking, ownedByWeapon = {} } = catalog;
   const item = (offerId, extra) => {
     const skin = byLevel[offerId] || { id: offerId, name: 'Unknown item', weapon: '', tier: 'Other', icon: '' };
     const r = ranking.byId[skin.id];
@@ -208,7 +218,12 @@ function parseStore(storefront, catalog) {
       list: r ? r.list : null,
       favourite: r ? r.favourite : false,
       rated: r ? r.rated : false,
-      gap: R.fillsGap(skin.weapon, skin.tier),
+      gap: R.fillsGap(skin.weapon, skin.tier) && !ownedByWeapon[skin.weapon],
+      upgradeOver: (() => {
+        const own = ownedByWeapon[skin.weapon];
+        if (!r || !own || skin.owned) return null;
+        return own.rank === null || r.rank < own.rank ? own.name : null;
+      })(),
     };
   };
   const panel = storefront.SkinsPanelLayout || {};
@@ -233,7 +248,7 @@ const listName = s => (s.list === 'knife' ? 'knife' : 'gun');
 function line(s, { discount = false } = {}) {
   const fav = s.favourite ? '❤️ ' : '';
   const price = discount && s.was ? `${s.price} VP (-${s.discount}%)` : `${s.price} VP`;
-  const gap = s.gap ? ` · first Premium+ ${s.weapon} for you` : '';
+  const gap = s.gap ? ` · first Premium+ ${s.weapon} for you` : s.upgradeOver ? ` · upgrade over your ${s.upgradeOver}` : '';
   const rank = s.rank ? `#${s.rank} ${listName(s)} · ` : '';
   return `${fav}${rank}${s.name} · ${s.tier} · ${price}${gap}`;
 }
@@ -419,6 +434,11 @@ const STYLE = `
   .gaptag { grid-column: 1 / -1; justify-self: start; display: inline-flex; align-items: center; gap: 8px; margin-top: 6px;
             padding: 6px 10px; background: rgb(255 70 85 / .12); color: #FF7A85; font-size: 14px; font-weight: 600; clip-path: var(--clip-sm); }
   .gaptag::before { content: ""; width: 8px; height: 8px; background: var(--red); transform: rotate(45deg); }
+  .gaptag.up { background: rgb(63 209 165 / .12); color: #3FD1A5; }
+  .gaptag.up::before { background: #3FD1A5; }
+  .owned { display: inline-block; margin-left: 8px; padding: 2px 7px; font: 700 11px/1.4 var(--body); color: var(--ink);
+           background: var(--bone-2); vertical-align: 2px; clip-path: var(--clip-sm); }
+  .row.mine .n { opacity: .45; }
   .wtab { position: relative; }
   .wtab.need::after { content: ""; position: absolute; top: 7px; right: 9px; width: 7px; height: 7px; background: var(--red); transform: rotate(45deg); }
   .row .who .need { color: #FF7A85; }
@@ -638,7 +658,7 @@ const CLIENT_JS = `
   // Rankings: list tabs, weapon tabs, search and filters.
   var rows = Array.prototype.slice.call(document.querySelectorAll('.row'));
   if (rows.length) {
-    var state = { list: 'gun', weapon: 'all', q: '', fav: false, top: false, need: false };
+    var state = { list: 'gun', weapon: 'all', q: '', fav: false, top: false, need: false, hideOwned: false };
     var empty = document.querySelector('.empty');
     var count = document.querySelector('.count');
     var weaponBar = document.querySelector('.weapons');
@@ -650,7 +670,8 @@ const CLIENT_JS = `
           && (!state.q || r.dataset.name.indexOf(state.q) !== -1)
           && (!state.fav || r.classList.contains('fav'))
           && (!state.top || r.classList.contains('top'))
-          && (!state.need || r.dataset.need === '1');
+          && (!state.need || r.dataset.need === '1')
+          && (!state.hideOwned || !r.classList.contains('mine'));
         r.classList.toggle('off', !ok);
         r.classList.remove('in');
         if (ok) shown.push(r);
@@ -758,7 +779,7 @@ const dialogHtml = () => `
 
 // Your favourites, best-ranked first, as a swipeable strip with previews.
 function watchlist(ranking) {
-  const favs = [...ranking.guns, ...ranking.knives].filter(s => s.favourite)
+  const favs = [...ranking.guns, ...ranking.knives].filter(s => s.favourite && !s.owned)
     .sort((a, b) => (a.list === b.list ? a.rank - b.rank : a.list === 'gun' ? -1 : 1));
   if (!favs.length) return { html: '', skins: [] };
   const tiles = favs.map(s => `
@@ -791,6 +812,7 @@ function card(s) {
         <div class="price">${price}</div>
         ${rank}
         ${s.gap ? `<span class="gaptag">Your first Premium+ ${esc(s.weapon)}</span>` : ''}
+        ${s.upgradeOver ? `<span class="gaptag up">Upgrade over your ${esc(s.upgradeOver)}</span>` : ''}
       </div>
     </article>`;
 }
@@ -855,12 +877,12 @@ function storePage(store, ranking) {
 
 function rankRow(s) {
   const colour = TIER_COLOUR[s.tier] || '#7B8590';
-  const cls = ['row', s.rank <= R.TOP_RANK ? 'top' : '', s.favourite ? 'fav' : '', s.rank === R.TOP_RANK ? 'cut' : ''].filter(Boolean).join(' ');
+  const cls = ['row', s.rank <= R.TOP_RANK ? 'top' : '', s.favourite ? 'fav' : '', s.rank === R.TOP_RANK ? 'cut' : '', s.owned ? 'mine' : ''].filter(Boolean).join(' ');
   return `
       <li class="${cls}" data-list="${s.list}" data-need="${R.needsGun(s.weapon) && s.list === 'gun' ? '1' : ''}" data-weapon="${esc(s.weapon)}" data-name="${esc(s.name.toLowerCase())}" style="--tier:${colour}">
         <span class="n">${s.rank}</span>
         <span class="thumb">${s.icon ? `<img src="${esc(s.icon)}" alt="" loading="lazy">` : ''}</span>
-        <span class="who"><b>${s.favourite ? '<span class="heart" aria-label="Favourite">❤ </span>' : ''}${esc(s.name)}</b><span>${esc(s.collection)}${s.rated ? '' : ', no vote data'}${R.needsGun(s.weapon) && s.list === 'gun' ? `, <span class="need">you need a ${esc(s.weapon)} skin</span>` : ''}</span></span>
+        <span class="who"><b>${s.favourite ? '<span class="heart" aria-label="Favourite">❤ </span>' : ''}${esc(s.name)}${s.owned ? '<span class="owned">Owned</span>' : ''}</b><span>${esc(s.collection)}${s.rated ? '' : ', no vote data'}${R.needsGun(s.weapon) && s.list === 'gun' ? `, <span class="need">you need ${/^[aeiou]/i.test(s.weapon) ? 'an' : 'a'} ${esc(s.weapon)} skin</span>` : ''}</span></span>
         ${tierLine(s, false)}
         <button class="play" type="button" data-preview="${esc(s.id)}" aria-label="Preview ${esc(s.name)}">▶</button>
       </li>`;
@@ -898,6 +920,7 @@ function rankingsPage(ranking, weaponIcons) {
     <button class="chip" type="button" data-f="fav" aria-pressed="false">❤ Favourites</button>
     <button class="chip" type="button" data-f="top" aria-pressed="false">Top ${R.TOP_RANK}</button>
     <button class="chip" type="button" data-f="need" aria-pressed="false">Guns I need</button>
+    <button class="chip" type="button" data-f="hideOwned" aria-pressed="false">Hide owned</button>
     <span class="count" aria-live="polite"></span>
     ${weaponTabs(ranking.guns, weaponIcons)}
   </div>

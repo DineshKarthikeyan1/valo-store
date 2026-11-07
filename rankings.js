@@ -12,6 +12,17 @@
 // ---- Your favourite collections: urgent alerts + an extra last-chance reminder ----
 const FAVOURITES = ['Spectrum', 'Ayakashi', 'Radiant Entertainment System', 'ORA'];
 
+// ---- Skins you own ----
+// "Name Weapon" matches that skin; "Collection *" matches the whole bundle (knife included).
+// Numbers are ignored when matching, so "PRX 25 Classic" matches the PRX Classic however Riot names it.
+const OWNED = [
+  'Phaseguard Vandal',
+  'Popmonz *',            // whole bundle: Phantom, Odin, Sheriff, Stinger, knife
+  'Nocturnum Phantom',
+  'Forsaken Guardian',
+  'PRX 25 Classic',
+];
+
 // ---- Guns you don't own a Premium-or-better skin for yet ----
 // Any Premium, Exclusive or Ultra skin for these gets flagged and pinged once, even if it isn't top-ranked.
 // Remove a gun from this list once you've bought a skin for it.
@@ -226,6 +237,20 @@ function rankSkins(skins) {
   return { guns, knives, byId };
 }
 
+// Owned-skin matching (see OWNED above).
+const normWords = s => String(s || '').toLowerCase().replace(/ø/g, 'o').split(/[^a-z0-9]+/).filter(Boolean);
+const OWNED_RULES = OWNED.map(entry => {
+  const words = normWords(entry);
+  if (entry.trim().endsWith('*')) return { words: words.filter(w => !/^\d+$/.test(w)), weapon: null };
+  return { weapon: words[words.length - 1], words: words.slice(0, -1).filter(w => !/^\d+$/.test(w)) };
+});
+function isOwned(skin) {
+  const hay = normWords(`${skin.name} ${skin.theme || ''}`).join(' ');
+  const weapon = String(skin.weapon || '').toLowerCase();
+  return OWNED_RULES.some(r => (!r.weapon || r.weapon === weapon || (r.weapon === 'knife' && weapon === 'melee'))
+    && r.words.length && r.words.every(w => hay.split(' ').includes(w)));
+}
+
 // Spelling-tolerant ("Marshall" = "Marshal").
 const gunKey = w => String(w || '').toLowerCase().replace(/l+$/, 'l');
 const NEED_KEYS = new Set(NEED_GUNS.map(gunKey));
@@ -233,6 +258,7 @@ const needsGun = weapon => NEED_KEYS.has(gunKey(weapon));
 const fillsGap = (weapon, tier) => needsGun(weapon) && GAP_TIERS.has(tier);
 
 module.exports = {
+  OWNED, isOwned,
   NEED_GUNS, needsGun, fillsGap,
   FAVOURITES, TOP_RANK, MID_REMINDER_H, LAST_CALL_H,
   COLLECTIONS, COMMUNITY, YOUR_OVERRIDES, WEAPON_WEIGHT, rankSkins, findCollection, isFavourite,

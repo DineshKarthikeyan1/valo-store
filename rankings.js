@@ -12,6 +12,13 @@
 // ---- Your favourite collections: urgent alerts + an extra last-chance reminder ----
 const FAVOURITES = ['Spectrum', 'Ayakashi', 'Radiant Entertainment System', 'ORA'];
 
+// ---- Guns you don't own a Premium-or-better skin for yet ----
+// Any Premium, Exclusive or Ultra skin for these gets flagged and pinged once, even if it isn't top-ranked.
+// Remove a gun from this list once you've bought a skin for it.
+const NEED_GUNS = ['Shorty', 'Frenzy', 'Ghost', 'Spectre', 'Judge', 'Bucky', 'Bandit', 'Outlaw',
+  'Bulldog', 'Marshal', 'Operator', 'Warden'];
+const GAP_TIERS = new Set(['Premium', 'Exclusive', 'Ultra']);
+
 // ---- Reminder rules ----
 const TOP_RANK = 50;        // ranks 1-50 (in their list) get reminded twice a day
 const MID_REMINDER_H = 12;  // 2nd reminder when this many hours are left in the store
@@ -219,7 +226,14 @@ function rankSkins(skins) {
   return { guns, knives, byId };
 }
 
+// Spelling-tolerant ("Marshall" = "Marshal").
+const gunKey = w => String(w || '').toLowerCase().replace(/l+$/, 'l');
+const NEED_KEYS = new Set(NEED_GUNS.map(gunKey));
+const needsGun = weapon => NEED_KEYS.has(gunKey(weapon));
+const fillsGap = (weapon, tier) => needsGun(weapon) && GAP_TIERS.has(tier);
+
 module.exports = {
+  NEED_GUNS, needsGun, fillsGap,
   FAVOURITES, TOP_RANK, MID_REMINDER_H, LAST_CALL_H,
   COLLECTIONS, COMMUNITY, YOUR_OVERRIDES, WEAPON_WEIGHT, rankSkins, findCollection, isFavourite,
 };

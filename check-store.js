@@ -178,7 +178,9 @@ function buildCatalog({ weapons, tiers, themes }) {
     }
   }
   const ranking = R.rankSkins(topSkins);
-  return { byLevel, ranking };
+  // White weapon silhouettes for the rankings weapon tabs.
+  const weaponIcons = Object.fromEntries(weapons.map(w => [w.displayName, w.killStreamIcon || w.displayIcon || '']));
+  return { byLevel, ranking, weaponIcons };
 }
 
 async function fetchStorefront(auth, clientVersion) {
@@ -206,6 +208,7 @@ function parseStore(storefront, catalog) {
       list: r ? r.list : null,
       favourite: r ? r.favourite : false,
       rated: r ? r.rated : false,
+      gap: R.fillsGap(skin.weapon, skin.tier),
     };
   };
   const panel = storefront.SkinsPanelLayout || {};
@@ -228,10 +231,11 @@ const isTopRank = s => s.rank !== null && s.rank <= R.TOP_RANK;
 const listName = s => (s.list === 'knife' ? 'knife' : 'gun');
 
 function line(s, { discount = false } = {}) {
-  const rank = s.rank ? `#${s.rank} ${listName(s)}` : s.tier;
   const fav = s.favourite ? '❤️ ' : '';
   const price = discount && s.was ? `${s.price} VP (-${s.discount}%)` : `${s.price} VP`;
-  return `${fav}${rank} · ${s.name} · ${s.tier} · ${price}`;
+  const gap = s.gap ? ` · first Premium+ ${s.weapon} for you` : '';
+  const rank = s.rank ? `#${s.rank} ${listName(s)} · ` : '';
+  return `${fav}${rank}${s.name} · ${s.tier} · ${price}${gap}`;
 }
 
 // Which reminder stages are due, given how long is left in the store.
@@ -248,7 +252,7 @@ function dueStages(secondsLeft) {
 //   mid:   top-50 ranks and favourites (twice a day)
 //   last:  favourites only (extra last-chance ping)
 const QUALIFIES = {
-  first: s => s.rank !== null,
+  first: s => s.rank !== null || s.gap,
   mid: s => s.favourite || isTopRank(s),
   last: s => s.favourite,
 };
@@ -269,7 +273,9 @@ async function handleDaily(store, state) {
         ? `LAST CHANCE: favourite skin leaves in ${left}`
         : stage === 'mid'
           ? `Reminder: still in your store (${left} left)`
-          : hasFav ? 'FAVOURITE skin in your store!' : 'Top-tier skin in your store';
+          : hasFav ? 'FAVOURITE skin in your store!'
+            : items.some(s => s.rank !== null) ? 'Top-tier skin in your store'
+              : `New Premium+ skin for your ${items[0].weapon}`;
       const priority = hasFav ? 'urgent' : items.some(isTopRank) ? 'high' : 'default';
       await notify({
         title,
@@ -329,6 +335,8 @@ const STYLE = `
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
+  @view-transition { navigation: auto; }  /* smooth fade between Today and Rankings */
+  .off { display: none !important; }
   body { margin: 0; background: var(--ink); color: var(--text); font: 400 16px/1.5 var(--body); }
   body::before { /* faint tactical grid */
     content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: .5;
@@ -405,15 +413,27 @@ const STYLE = `
   .price { text-align: right; font: 800 24px/1 var(--display); }
   .price small { display: block; font: 500 13px/1.3 var(--body); color: var(--slate); }
   .price s { color: var(--slate); font-weight: 600; }
-  .price .off { color: #3FD1A5; }
+  .price .disc { color: #3FD1A5; }
   .rankchip { justify-self: start; display: inline-flex; gap: 6px; align-items: baseline; font-size: 14px; color: var(--slate); }
   .rankchip b { font: 800 20px/1 var(--display); color: var(--bone); }
+  .gaptag { grid-column: 1 / -1; justify-self: start; display: inline-flex; align-items: center; gap: 8px; margin-top: 6px;
+            padding: 6px 10px; background: rgb(255 70 85 / .12); color: #FF7A85; font-size: 14px; font-weight: 600; clip-path: var(--clip-sm); }
+  .gaptag::before { content: ""; width: 8px; height: 8px; background: var(--red); transform: rotate(45deg); }
+  .wtab { position: relative; }
+  .wtab.need::after { content: ""; position: absolute; top: 7px; right: 9px; width: 7px; height: 7px; background: var(--red); transform: rotate(45deg); }
+  .row .who .need { color: #FF7A85; }
 
   /* video viewer */
   .player { position: relative; aspect-ratio: 16 / 9; background: #05090D; overflow: hidden;
             display: flex; align-items: center; justify-content: center; }
   .player video, .player img { width: 100%; height: 100%; object-fit: contain; display: block; }
   .player .nov { color: var(--slate); font-size: 14px; }
+  .player::before { /* shimmer while the video loads */
+    content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+    background: linear-gradient(100deg, transparent 30%, rgb(236 232 225 / .07) 50%, transparent 70%);
+    background-size: 220% 100%; animation: shim 1.3s linear infinite; }
+  .player.ready::before { display: none; }
+  @keyframes shim { from { background-position: 120% 0; } to { background-position: -120% 0; } }
   .vbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; flex-wrap: wrap; padding: 0 2px; }
   .vlabel { font-size: 14px; color: var(--slate); }
   .vlabel b { color: var(--bone); font-weight: 600; }
@@ -434,9 +454,30 @@ const STYLE = `
            padding: 12px 0; margin-top: 18px; background: linear-gradient(var(--ink) 80%, transparent); }
   .seg { display: flex; background: var(--ink-2); padding: 4px; clip-path: var(--clip-sm); }
   .seg button, .chip { border: 0; background: none; color: var(--slate); font: 600 15px/1 var(--body); padding: 9px 14px; cursor: pointer; }
+  .seg button { transition: background .2s, color .2s; }
   .seg button[aria-pressed="true"] { background: var(--bone); color: var(--ink); }
   .chip { background: var(--ink-2); clip-path: var(--clip-sm); }
+  .chip { transition: background .2s, color .2s; }
   .chip[aria-pressed="true"] { background: var(--red); color: #fff; }
+  .count { color: var(--slate); font-size: 14px; margin-left: auto; font-variant-numeric: tabular-nums; }
+  .weapons { flex: 1 1 100%; display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+             padding: 2px 2px 4px; -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent);
+             mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent); }
+  .weapons::-webkit-scrollbar { display: none; }
+  .wtab { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px;
+          min-width: 96px; height: 70px; padding: 8px 12px; background: var(--ink-2); border: 1px solid var(--line);
+          color: var(--slate); font: 600 14px/1 var(--body); cursor: pointer; scroll-snap-align: start;
+          clip-path: var(--clip-sm); transition: background .2s, color .2s, border-color .2s; }
+  .wtab img { height: 22px; max-width: 76px; object-fit: contain; opacity: .55; transition: opacity .2s, filter .2s; }
+  .wtab small { font-size: 12px; color: inherit; opacity: .8; font-weight: 500; }
+  .wtab:hover { border-color: var(--slate); color: var(--bone); }
+  .wtab:hover img { opacity: .9; }
+  .wtab[aria-pressed="true"] { background: var(--bone); color: var(--ink); border-color: var(--bone); }
+  .wtab[aria-pressed="true"] img { opacity: 1; filter: invert(1); }
+  .wtab .all { font: 900 22px/1 var(--display); }
+  .row.in { animation: rowIn .4s cubic-bezier(.2,.8,.2,1) both; }
+  @keyframes rowIn { from { opacity: 0; transform: translateX(-14px); } }
+  .row .n { transition: color .2s; }
   .search { flex: 1 1 200px; min-width: 0; background: var(--ink-2); border: 1px solid var(--line); color: var(--bone);
             font: 500 15px/1 var(--body); padding: 10px 12px; }
   .search::placeholder { color: var(--slate); }
@@ -466,6 +507,21 @@ const STYLE = `
   .dhead h3 { margin: 0; font: 800 28px/1 var(--display); text-transform: uppercase; }
   .x { background: var(--ink-2); border: 0; color: var(--bone); width: 40px; height: 40px; cursor: pointer; clip-path: var(--clip-sm); font-size: 16px; }
 
+  /* watchlist strip */
+  .watch { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: 12px; overflow-x: auto;
+           scroll-snap-type: x proximity; padding-bottom: 10px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  .wcard { --tier: var(--slate); position: relative; display: flex; flex-direction: column; gap: 10px; text-align: left;
+           background: var(--steel); border: 0; color: var(--bone); padding: 14px 14px 12px; cursor: pointer;
+           clip-path: var(--clip); scroll-snap-align: start; transition: transform .25s cubic-bezier(.2,.8,.2,1), background .2s; }
+  .wcard::before { content: ""; position: absolute; left: 0; top: 0; width: 100%; height: 3px; background: var(--tier); }
+  .wcard:hover { transform: translateY(-3px); background: #222D37; }
+  .wcard .pic { height: 64px; display: flex; align-items: center; justify-content: center; }
+  .wcard .pic img { max-width: 100%; max-height: 64px; object-fit: contain; transition: transform .35s cubic-bezier(.2,.8,.2,1); }
+  .wcard:hover .pic img { transform: scale(1.06) rotate(-2deg); }
+  .wcard b { font: 800 19px/1.05 var(--display); text-transform: uppercase; }
+  .wcard span { font-size: 13px; color: var(--slate); }
+  .wcard span em { font-style: normal; color: var(--bone); font-weight: 600; }
+
   footer { margin: 56px 0 40px; color: var(--slate); font-size: 14px; max-width: 70ch; }
 
   @media (max-width: 820px) {
@@ -477,6 +533,8 @@ const STYLE = `
     .row .n { font-size: 26px; }
     .hero.solo { grid-template-columns: 1fr; }
     .search { order: 3; flex-basis: 100%; }
+    .weapons { order: 4; }
+    .tools { position: static; background: none; }
     .logo { font-size: 22px; }
     .sec h2 { font-size: 28px; }
   }
@@ -489,6 +547,10 @@ const STYLE = `
     .hero::after { display: none; }
     .verdict span b { transform: none; animation: none; }
     .card.fav::after { animation: none; }
+    .row.in { animation: none; }
+    .player::before { animation: none; }
+    .wcard, .wcard .pic img { transition: none; }
+    @view-transition { navigation: none; }
     dialog[open] { animation: none; }
   }
 `;
@@ -519,11 +581,17 @@ const CLIENT_JS = `
     var player = box.querySelector('.player');
     if (v.vd) {
       player.innerHTML = '<video controls loop muted playsinline preload="metadata"></video>';
+      player.classList.remove('ready');
       var vid = player.firstChild; vid.src = v.vd; if (v.i) vid.poster = v.i;
+      vid.addEventListener('loadeddata', function () { player.classList.add('ready'); }, { once: true });
       if (play) vid.play().catch(function () {});
     } else if (v.i) {
-      player.innerHTML = '<img alt="">'; player.firstChild.src = v.i; player.firstChild.alt = m.n + ', ' + v.n;
+      player.classList.remove('ready');
+      player.innerHTML = '<img alt="">'; player.firstChild.alt = m.n + ', ' + v.n;
+      player.firstChild.addEventListener('load', function () { player.classList.add('ready'); }, { once: true });
+      player.firstChild.src = v.i;
     } else {
+      player.classList.add('ready');
       player.innerHTML = '<div class="nov">No preview from Riot for this one</div>';
     }
     box.querySelector('.vlabel').innerHTML = '<b>' + esc(v.n) + '</b> ' + (v.vd ? 'at max level' : '(render, no video)');
@@ -567,48 +635,71 @@ const CLIENT_JS = `
   }
   tick(); setInterval(tick, 20000);
 
-  // Rankings: tabs, search, filters.
-  var rows = document.querySelectorAll('.row');
+  // Rankings: list tabs, weapon tabs, search and filters.
+  var rows = Array.prototype.slice.call(document.querySelectorAll('.row'));
   if (rows.length) {
-    var state = { list: 'gun', q: '', fav: false, top: false };
+    var state = { list: 'gun', weapon: 'all', q: '', fav: false, top: false, need: false };
     var empty = document.querySelector('.empty');
-    function apply() {
-      var shown = 0;
+    var count = document.querySelector('.count');
+    var weaponBar = document.querySelector('.weapons');
+    function apply(animate) {
+      var shown = [];
       rows.forEach(function (r) {
         var ok = r.dataset.list === state.list
+          && (state.list !== 'gun' || state.weapon === 'all' || r.dataset.weapon === state.weapon)
           && (!state.q || r.dataset.name.indexOf(state.q) !== -1)
           && (!state.fav || r.classList.contains('fav'))
-          && (!state.top || r.classList.contains('top'));
-        r.hidden = !ok; if (ok) shown++;
+          && (!state.top || r.classList.contains('top'))
+          && (!state.need || r.dataset.need === '1');
+        r.classList.toggle('off', !ok);
+        r.classList.remove('in');
+        if (ok) shown.push(r);
       });
-      if (empty) empty.hidden = shown > 0;
+      if (empty) empty.classList.toggle('off', shown.length > 0);
+      if (count) count.textContent = shown.length + (shown.length === 1 ? ' skin' : ' skins');
+      if (weaponBar) weaponBar.classList.toggle('off', state.list !== 'gun');
+      // Cascade the first rows in so the change is visible.
+      if (animate && !reduce) {
+        void document.body.offsetWidth;
+        shown.slice(0, 24).forEach(function (r, i) { r.style.animationDelay = (i * 22) + 'ms'; r.classList.add('in'); });
+      }
+    }
+    function pressOnly(sel, el) {
+      document.querySelectorAll(sel).forEach(function (x) { x.setAttribute('aria-pressed', x === el ? 'true' : 'false'); });
     }
     document.querySelectorAll('.seg button').forEach(function (b) {
+      b.addEventListener('click', function () { state.list = b.dataset.list; pressOnly('.seg button', b); apply(true); });
+    });
+    document.querySelectorAll('.wtab').forEach(function (b) {
       b.addEventListener('click', function () {
-        state.list = b.dataset.list;
-        document.querySelectorAll('.seg button').forEach(function (x) { x.setAttribute('aria-pressed', x === b); });
-        apply();
+        state.weapon = b.dataset.weapon; pressOnly('.wtab', b); apply(true);
+        if (b.scrollIntoView) b.scrollIntoView({ block: 'nearest', inline: 'center', behavior: reduce ? 'auto' : 'smooth' });
       });
     });
     document.querySelectorAll('.chip').forEach(function (c) {
       c.addEventListener('click', function () {
         var on = c.getAttribute('aria-pressed') !== 'true';
-        c.setAttribute('aria-pressed', on); state[c.dataset.f] = on; apply();
+        c.setAttribute('aria-pressed', on ? 'true' : 'false'); state[c.dataset.f] = on;
+        if (c.dataset.f === 'need' && on && state.list !== 'gun') { var g = document.querySelector('.seg button[data-list="gun"]'); if (g) { g.click(); return; } }
+        apply(true);
       });
     });
     var search = document.querySelector('.search');
-    if (search) search.addEventListener('input', function () { state.q = search.value.trim().toLowerCase(); apply(); });
-    apply();
+    var t;
+    if (search) search.addEventListener('input', function () {
+      clearTimeout(t); t = setTimeout(function () { state.q = search.value.trim().toLowerCase(); apply(true); }, 120);
+    });
+    apply(false);
   }
 
   // Rankings: preview dialog.
   var dlg = document.getElementById('dlg');
   if (dlg) {
     var box = dlg.querySelector('.viewer');
-    document.querySelectorAll('.play[data-id]').forEach(function (btn) {
+    document.querySelectorAll('[data-preview]').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        box.dataset.id = btn.dataset.id;
-        dlg.querySelector('h3').textContent = (MEDIA[btn.dataset.id] || {}).n || '';
+        box.dataset.id = btn.dataset.preview;
+        dlg.querySelector('h3').textContent = (MEDIA[btn.dataset.preview] || {}).n || '';
         mount(box); dlg.showModal();
         var vid = box.querySelector('video'); if (vid && !reduce) vid.play().catch(function () {});
       });
@@ -659,10 +750,35 @@ const viewerHtml = (id, auto) => `
 
 const tierLine = (s, heart = true) => `<span class="tierline">${s.tierIcon ? `<img src="${esc(s.tierIcon)}" alt="">` : ''}${heart && s.favourite ? '<span class="heart" aria-label="Favourite">❤</span>' : ''}${esc(s.tier)}${s.weapon === 'Melee' ? ' melee' : ''}</span>`;
 
+const dialogHtml = () => `
+  <dialog id="dlg" aria-label="Skin preview">
+    <div class="dhead"><h3></h3><button class="x" type="button" aria-label="Close preview">✕</button></div>
+    ${viewerHtml('', false)}
+  </dialog>`;
+
+// Your favourites, best-ranked first, as a swipeable strip with previews.
+function watchlist(ranking) {
+  const favs = [...ranking.guns, ...ranking.knives].filter(s => s.favourite)
+    .sort((a, b) => (a.list === b.list ? a.rank - b.rank : a.list === 'gun' ? -1 : 1));
+  if (!favs.length) return { html: '', skins: [] };
+  const tiles = favs.map(s => `
+      <button class="wcard" type="button" data-preview="${esc(s.id)}" style="--tier:${TIER_COLOUR[s.tier] || '#7B8590'}" aria-label="Preview ${esc(s.name)}">
+        <span class="pic">${s.icon ? `<img src="${esc(s.icon)}" alt="" loading="lazy">` : ''}</span>
+        <b>${esc(s.name)}</b>
+        <span><em>#${s.rank}</em> ${listName(s)}, ${esc(s.tier)}</span>
+      </button>`).join('');
+  return {
+    html: `
+  <div class="sec"><h2>Your watchlist</h2><span class="meta">${favs.length} favourite skins you're waiting for</span></div>
+  <div class="watch">${tiles}</div>`,
+    skins: favs,
+  };
+}
+
 function card(s) {
   const colour = TIER_COLOUR[s.tier] || '#7B8590';
   const price = s.was
-    ? `${s.price} VP<small><s>${s.was}</s> <span class="off">${s.discount}% off</span></small>`
+    ? `${s.price} VP<small><s>${s.was}</s> <span class="disc">${s.discount}% off</span></small>`
     : `${s.price} VP`;
   const rank = s.rank
     ? `<span class="rankchip"><b>#${s.rank}</b>${listName(s)}${s.rated ? '' : ', no vote data'}</span>`
@@ -674,6 +790,7 @@ function card(s) {
         <div>${tierLine(s)}<h3>${esc(s.name)}</h3></div>
         <div class="price">${price}</div>
         ${rank}
+        ${s.gap ? `<span class="gaptag">Your first Premium+ ${esc(s.weapon)}</span>` : ''}
       </div>
     </article>`;
 }
@@ -682,10 +799,11 @@ function card(s) {
 function featured(items) {
   return items.find(s => s.favourite)
     || items.filter(s => s.rank !== null).sort((a, b) => a.rank - b.rank)[0]
+    || items.find(s => s.gap)
     || items[0];
 }
 
-function storePage(store) {
+function storePage(store, ranking) {
   const now = Date.now();
   const resetAt = now + store.dailyLeft * 1000;
   const nightEndAt = now + store.nightLeft * 1000;
@@ -703,9 +821,13 @@ function storePage(store) {
     const best = tops.sort((a, b) => a.rank - b.rank)[0];
     lines = ['Worth a', 'look.'];
     lede = `<strong>${esc(best.name)}</strong> is #${best.rank} on the ${listName(best)} rankings${tops.length > 1 ? `, and ${tops.length - 1} more top-tier skin${tops.length > 2 ? 's are' : ' is'} in today` : ''}.`;
+  } else if (all.some(s => s.gap)) {
+    const g = all.filter(s => s.gap);
+    lines = ['Fills a', 'gap.'];
+    lede = `<strong>${esc(g[0].name)}</strong> would be your first Premium-or-better ${esc(g[0].weapon)}${g.length > 1 ? `, and ${g.length - 1} more skin${g.length > 2 ? 's' : ''} today would fill a gap too` : ''}.`;
   } else {
     lines = ['Keep', 'waiting.'];
-    lede = 'Nothing Exclusive or Ultra in your store today.';
+    lede = 'Nothing Exclusive or Ultra in your store today, and nothing for the guns you still need a skin for.';
   }
 
   const hero = `
@@ -726,28 +848,46 @@ function storePage(store) {
   <div class="sec"><h2>Night Market</h2><span class="meta">Ends in <b data-until="${nightEndAt}">${fmtDuration(store.nightLeft)}</b></span></div>
   <div class="grid">${store.night.map(card).join('')}</div>`;
   }
-  return shell({ title: 'Store Watch', active: 'store', body, media: mediaJson(all) });
+  const watch = ranking ? watchlist(ranking) : { html: '', skins: [] };
+  body += watch.html + dialogHtml();
+  return shell({ title: 'Store Watch', active: 'store', body, media: mediaJson([...all, ...watch.skins]) });
 }
 
 function rankRow(s) {
   const colour = TIER_COLOUR[s.tier] || '#7B8590';
   const cls = ['row', s.rank <= R.TOP_RANK ? 'top' : '', s.favourite ? 'fav' : '', s.rank === R.TOP_RANK ? 'cut' : ''].filter(Boolean).join(' ');
   return `
-      <li class="${cls}" data-list="${s.list}" data-name="${esc(s.name.toLowerCase())}" style="--tier:${colour}">
+      <li class="${cls}" data-list="${s.list}" data-need="${R.needsGun(s.weapon) && s.list === 'gun' ? '1' : ''}" data-weapon="${esc(s.weapon)}" data-name="${esc(s.name.toLowerCase())}" style="--tier:${colour}">
         <span class="n">${s.rank}</span>
         <span class="thumb">${s.icon ? `<img src="${esc(s.icon)}" alt="" loading="lazy">` : ''}</span>
-        <span class="who"><b>${s.favourite ? '<span class="heart" aria-label="Favourite">❤ </span>' : ''}${esc(s.name)}</b><span>${esc(s.collection)}${s.rated ? '' : ', no vote data'}</span></span>
+        <span class="who"><b>${s.favourite ? '<span class="heart" aria-label="Favourite">❤ </span>' : ''}${esc(s.name)}</b><span>${esc(s.collection)}${s.rated ? '' : ', no vote data'}${R.needsGun(s.weapon) && s.list === 'gun' ? `, <span class="need">you need a ${esc(s.weapon)} skin</span>` : ''}</span></span>
         ${tierLine(s, false)}
-        <button class="play" type="button" data-id="${esc(s.id)}" aria-label="Preview ${esc(s.name)}">▶</button>
+        <button class="play" type="button" data-preview="${esc(s.id)}" aria-label="Preview ${esc(s.name)}">▶</button>
       </li>`;
 }
 
-function rankingsPage(ranking) {
+const WEAPON_ORDER = ['Vandal', 'Phantom', 'Operator', 'Sheriff', 'Ghost', 'Spectre', 'Classic', 'Marshal', 'Outlaw',
+  'Bulldog', 'Guardian', 'Judge', 'Bucky', 'Stinger', 'Frenzy', 'Shorty', 'Ares', 'Odin'];
+
+function weaponTabs(guns, icons) {
+  const counts = {};
+  for (const s of guns) counts[s.weapon] = (counts[s.weapon] || 0) + 1;
+  const names = Object.keys(counts).sort((a, b) => {
+    const ia = WEAPON_ORDER.indexOf(a), ib = WEAPON_ORDER.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b);
+  });
+  const tab = (key, label, inner, n, on) => `<button class="wtab${key !== 'all' && R.needsGun(key) ? ' need' : ''}" type="button" data-weapon="${esc(key)}" aria-pressed="${on}" aria-label="${esc(label)}, ${n} skins">${inner}<span>${esc(label)}</span><small>${n}</small></button>`;
+  return `<div class="weapons" role="group" aria-label="Filter by weapon">${
+    tab('all', 'All guns', '<span class="all">ALL</span>', guns.length, true)
+  }${names.map(w => tab(w, w, icons && icons[w] ? `<img src="${esc(icons[w])}" alt="">` : '', counts[w], false)).join('')}</div>`;
+}
+
+function rankingsPage(ranking, weaponIcons) {
   const body = `
   <section class="hero solo" aria-label="Rankings">
     <h1 class="verdict"><span><b>The rankings.</b></span></h1>
     <p class="lede">Every Exclusive and Ultra skin, ranked from community vote data. Guns are ranked together and knives separately.</p>
-    <div><p class="lede">Ranks 1 to ${R.TOP_RANK} get two reminders a day when they show up in your store. Your favourites get urgent alerts and a last-chance ping. Press ▶ on any skin to watch it fully upgraded, in every variant.</p></div>
+    <div><p class="lede">Ranks 1 to ${R.TOP_RANK} get two reminders a day when they show up in your store. Your favourites get urgent alerts and a last-chance ping. Press ▶ on any skin to watch it fully upgraded, in every variant. Red diamonds mark the guns you don't have a Premium-or-better skin for yet.</p></div>
   </section>
   <div class="tools">
     <div class="seg" role="group" aria-label="Weapon type">
@@ -757,13 +897,13 @@ function rankingsPage(ranking) {
     <input class="search" type="search" placeholder="Search skins" aria-label="Search skins">
     <button class="chip" type="button" data-f="fav" aria-pressed="false">❤ Favourites</button>
     <button class="chip" type="button" data-f="top" aria-pressed="false">Top ${R.TOP_RANK}</button>
+    <button class="chip" type="button" data-f="need" aria-pressed="false">Guns I need</button>
+    <span class="count" aria-live="polite"></span>
+    ${weaponTabs(ranking.guns, weaponIcons)}
   </div>
   <ol class="rows">${[...ranking.guns, ...ranking.knives].map(rankRow).join('')}</ol>
-  <p class="empty" hidden>No skins match. Clear the search or filters.</p>
-  <dialog id="dlg" aria-label="Skin preview">
-    <div class="dhead"><h3></h3><button class="x" type="button" aria-label="Close preview">✕</button></div>
-    ${viewerHtml('', false)}
-  </dialog>`;
+  <p class="empty off">No skins match. Clear the search or filters.</p>
+  ${dialogHtml()}`;
   return shell({ title: 'Rankings · Store Watch', active: 'rank', body, media: mediaJson([...ranking.guns, ...ranking.knives]) });
 }
 
@@ -806,8 +946,8 @@ async function process_(gameData, storefront) {
     console.log(`  ${s.favourite ? '♥' : s.rank ? '*' : ' '} ${s.name} (${s.tier}${s.rank ? `, #${s.rank} ${listName(s)}` : ''}) ${s.price} VP`);
   }
 
-  writeFile('index.html', storePage(store));
-  writeFile('rankings.html', rankingsPage(catalog.ranking));
+  writeFile('index.html', storePage(store, catalog.ranking));
+  writeFile('rankings.html', rankingsPage(catalog.ranking, catalog.weaponIcons));
 
   const state = loadState();
   const daily = await handleDaily(store, state);

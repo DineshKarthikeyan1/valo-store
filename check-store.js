@@ -128,9 +128,35 @@ async function fetchGameData() {
   return { clientVersion: version.data.riotClientVersion, weapons: weapons.data, tiers: tiers.data, themes: themes.data };
 }
 
+// Variant name from Riot's chroma name, e.g. "Kuronami Vandal Level 4\n(Variant 1 Black)" -> "Black".
+function variantName(chroma, index) {
+  if (index === 0) return 'Base';
+  const m = String(chroma.displayName || '').match(/\(([^)]+)\)/);
+  const raw = m ? m[1] : '';
+  const cleaned = raw.replace(/^variant\s*\d+\s*/i, '').trim();
+  return cleaned || raw || `Variant ${index}`;
+}
+
+// Every colour variant of a skin, each with its MAX-LEVEL demo video where one exists.
+// Base variant: the highest level's demo video (shows all upgrades: VFX, animation, finisher).
+// Other variants: Riot's video for that variant, which shows the fully upgraded weapon in that colour.
+function skinVariants(s) {
+  const levels = s.levels || [];
+  const maxLevelVideo = [...levels].reverse().map(l => l.streamedVideo).find(Boolean) || null;
+  const maxLevelIcon = [...levels].reverse().map(l => l.displayIcon).find(Boolean) || null;
+  const chromas = s.chromas && s.chromas.length ? s.chromas : [{}];
+  return chromas.map((c, i) => ({
+    name: variantName(c, i),
+    swatch: c.swatch || null,
+    image: c.fullRender || c.displayIcon || (i === 0 ? maxLevelIcon || s.displayIcon : null) || null,
+    video: i === 0 ? (maxLevelVideo || c.streamedVideo || null) : (c.streamedVideo || null),
+  }));
+}
+
 // Turns raw game data into: a level-id -> skin lookup, and the ranking of all Exclusive/Ultra skins.
 function buildCatalog({ weapons, tiers, themes }) {
   const tierName = Object.fromEntries(tiers.map(t => [t.uuid, t.devName]));
+  const tierIcon = Object.fromEntries(tiers.map(t => [t.uuid, t.displayIcon || '']));
   const themeName = Object.fromEntries(themes.map(t => [t.uuid, t.displayName]));
   const byLevel = {};
   const topSkins = [];
@@ -141,9 +167,11 @@ function buildCatalog({ weapons, tiers, themes }) {
         name: s.displayName,
         weapon: w.displayName,
         tier: tierName[s.contentTierUuid] || 'Other',
+        tierIcon: tierIcon[s.contentTierUuid] || '',
         theme: themeName[s.themeUuid] || '',
         icon: (s.levels && s.levels[0] && s.levels[0].displayIcon) || s.displayIcon
           || (s.chromas && s.chromas[0] && s.chromas[0].fullRender) || '',
+        variants: skinVariants(s),
       };
       for (const lvl of s.levels || []) byLevel[lvl.uuid] = skin;
       if (TOP.has(skin.tier)) topSkins.push(skin);
@@ -283,142 +311,471 @@ async function handleNight(store, state) {
 }
 
 // ---------- webpages ----------
+// Design: Valorant's own palette (ink navy, bone, red) and clipped HUD corners.
+// One bold moment: the bone hero with today's verdict and the best skin playing at max level.
+
+const FONTS = '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+  + '<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Big+Shoulders+Display:wght@700;800;900&display=swap" rel="stylesheet">';
 
 const STYLE = `
-  :root { --bg:#0f1419; --panel:#1a2129; --text:#ece8e1; --muted:#8b949e; --line:#2a333d; --accent:#ff4655; --fav:#ff5c8a; }
+  :root {
+    --ink: #0F1923; --ink-2: #16212C; --steel: #1C252E; --line: #2B3640;
+    --bone: #ECE8E1; --bone-2: #DCD6CC; --red: #FF4655; --red-deep: #BD3944;
+    --slate: #7B8590; --text: #ECE8E1;
+    --display: "Big Shoulders Display", "Arial Narrow", sans-serif;
+    --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --clip: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px));
+    --clip-sm: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+  }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--text);
-         font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  main { max-width: 820px; margin: 0 auto; padding: 28px 16px 48px; }
-  header { display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap; }
-  header h1 { margin:0; font-size: 28px; letter-spacing: .04em; text-transform: uppercase; }
-  header h1 span { color: var(--accent); }
-  nav a { color: var(--muted); text-decoration:none; margin-left: 14px; font-size: 14px; }
-  nav a.on { color: var(--text); font-weight: 600; }
-  .status { margin: 14px 0 26px; padding: 12px 14px; border-radius: 10px; background: var(--panel);
-            border-left: 4px solid var(--muted); }
-  .status.hit { border-left-color: #f5955b; }
-  .status.fav { border-left-color: var(--fav); }
-  .status.err { border-left-color: var(--accent); }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted);
-       margin: 28px 0 10px; display:flex; justify-content:space-between; gap: 12px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
-  .card { display:flex; gap:14px; align-items:center; background: var(--panel); border:1px solid var(--line);
-          border-left: 4px solid var(--tier); border-radius: 10px; padding: 12px; }
-  .card.top { box-shadow: 0 0 0 1px var(--tier), 0 6px 24px -10px var(--tier); }
-  .card.fav { box-shadow: 0 0 0 2px var(--fav), 0 6px 28px -8px var(--fav); }
-  .art { width: 120px; height: 60px; flex: none; display:flex; align-items:center; justify-content:center; }
-  .art img { max-width: 100%; max-height: 100%; object-fit: contain; }
-  .tier { font-size: 12px; font-weight: 600; color: var(--tier); text-transform: uppercase; letter-spacing: .08em; }
-  .rank { display:inline-block; margin-top: 4px; font-size: 12px; color: var(--muted); }
-  .rank b { color: var(--text); }
-  .heart { color: var(--fav); }
-  h3 { margin: 2px 0 4px; font-size: 16px; }
-  .price { font-weight: 600; }
-  s { color: var(--muted); }
-  .off { color: #2fb59a; font-weight: 600; }
-  table { width:100%; border-collapse: collapse; font-size: 14px; }
-  th, td { text-align:left; padding: 7px 8px; border-bottom: 1px solid var(--line); }
-  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing:.08em; }
-  td.n { color: var(--muted); width: 3.5em; font-variant-numeric: tabular-nums; }
-  td.t { font-size: 12px; font-weight: 600; text-transform: uppercase; }
-  tr.top50 td.n { color: var(--text); }
-  tr.fav td { background: color-mix(in srgb, var(--fav) 10%, transparent); }
-  .cut td { border-bottom: 2px dashed var(--accent); }
-  .muted { color: var(--muted); font-size: 13px; }
-  footer { margin-top: 36px; color: var(--muted); font-size: 13px; }
-  @media (max-width: 420px) { .grid { grid-template-columns: 1fr; } .art { width: 90px; } td.c { display:none; } }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--ink); color: var(--text); font: 400 16px/1.5 var(--body); }
+  body::before { /* faint tactical grid */
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: .5;
+    background-image: linear-gradient(rgb(255 255 255 / .025) 1px, transparent 1px),
+                      linear-gradient(90deg, rgb(255 255 255 / .025) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+  a { color: inherit; }
+  .wrap { position: relative; z-index: 1; max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+
+  /* top bar */
+  .bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; }
+  .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; white-space: nowrap;
+          font: 900 26px/1 var(--display); letter-spacing: .02em; text-transform: uppercase; }
+  .logo i { width: 14px; height: 26px; background: var(--red); transform: skewX(-18deg); display: inline-block; }
+  .tabs { display: flex; gap: 4px; background: var(--ink-2); padding: 4px; clip-path: var(--clip-sm); }
+  .tabs a { text-decoration: none; padding: 8px 16px; font-weight: 600; font-size: 15px; color: var(--slate); }
+  .tabs a.on { background: var(--bone); color: var(--ink); }
+  .tabs a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+
+  /* HERO: the one loud moment */
+  .hero { position: relative; background: var(--bone); color: var(--ink); clip-path: var(--clip);
+          display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 28px; align-items: center;
+          padding: 36px; margin-top: 6px; overflow: hidden; }
+  .hero::after { /* red slash that sweeps in on load */
+    content: ""; position: absolute; left: -10%; top: 0; bottom: 0; width: 38%; background: var(--red);
+    transform: skewX(-22deg) translateX(-140%); opacity: .95; animation: slash 1.1s cubic-bezier(.7,0,.2,1) .1s forwards;
+    pointer-events: none; }
+  @keyframes slash { 0% { transform: skewX(-22deg) translateX(-140%); } 55% { transform: skewX(-22deg) translateX(120%); } 100% { transform: skewX(-22deg) translateX(420%); } }
+  .verdict { font: 900 clamp(56px, 9vw, 120px)/.86 var(--display); text-transform: uppercase; margin: 0;
+             letter-spacing: -.005em; }
+  .verdict span { display: block; overflow: hidden; }
+  .verdict span b { display: block; font-weight: 900; transform: translateY(105%); animation: rise .7s cubic-bezier(.2,.8,.2,1) forwards; }
+  .verdict span:nth-child(2) b { animation-delay: .12s; }
+  @keyframes rise { to { transform: none; } }
+  .hero.fav .verdict { color: var(--red-deep); }
+  .hero.solo { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .hero.solo .verdict { grid-column: 1 / -1; }
+  .hero.solo .lede { margin-top: 0; }
+  .lede { font-size: 18px; line-height: 1.45; max-width: 34ch; margin: 18px 0 0; color: #2A3540; }
+  .lede strong { color: var(--ink); }
+  .clock { display: inline-flex; align-items: baseline; gap: 8px; margin-top: 20px; padding: 10px 14px;
+           background: var(--ink); color: var(--bone); clip-path: var(--clip-sm); }
+  .clock b { font: 800 28px/1 var(--display); font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+  .clock small { font-size: 14px; color: var(--bone-2); }
+  .hero .feature { position: relative; }
+  .hero .feature .viewer { background: var(--ink); padding: 10px; clip-path: var(--clip); }
+  .hero .feature .vbar { color: var(--bone); }
+  .hero .feature .name { font: 800 22px/1.1 var(--display); text-transform: uppercase; margin: 12px 0 0; color: var(--ink); }
+
+  /* sections */
+  .sec { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 44px 0 14px; }
+  .sec h2 { margin: 0; font: 800 34px/1 var(--display); text-transform: uppercase; }
+  .sec .meta { color: var(--slate); font-size: 15px; }
+  .sec .meta b { color: var(--bone); font-variant-numeric: tabular-nums; }
+
+  /* skin cards */
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .card { --tier: var(--slate); position: relative; background: var(--steel); clip-path: var(--clip); padding: 12px; }
+  .card::before { content: ""; position: absolute; left: 0; top: 0; width: 4px; height: 100%; background: var(--tier); }
+  .card.fav { background: linear-gradient(var(--steel), var(--steel)) padding-box; }
+  .card.fav::after { /* animated border for favourites - rare, so it gets the flash */
+    content: ""; position: absolute; inset: 0; clip-path: var(--clip); pointer-events: none; padding: 2px;
+    background: conic-gradient(from var(--a, 0deg), var(--red), transparent 30%, var(--red) 50%, transparent 80%, var(--red));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude; animation: spin 4s linear infinite; }
+  @property --a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+  @keyframes spin { to { --a: 360deg; } }
+  .info { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: end; padding: 12px 6px 4px 10px; }
+  .info h3 { margin: 0; font: 800 26px/1 var(--display); text-transform: uppercase; }
+  .tierline { display: flex; align-items: center; gap: 6px; color: var(--tier); font-weight: 600; font-size: 14px; }
+  .tierline img { width: 18px; height: 18px; }
+  .heart { color: var(--red); }
+  .price { text-align: right; font: 800 24px/1 var(--display); }
+  .price small { display: block; font: 500 13px/1.3 var(--body); color: var(--slate); }
+  .price s { color: var(--slate); font-weight: 600; }
+  .price .off { color: #3FD1A5; }
+  .rankchip { justify-self: start; display: inline-flex; gap: 6px; align-items: baseline; font-size: 14px; color: var(--slate); }
+  .rankchip b { font: 800 20px/1 var(--display); color: var(--bone); }
+
+  /* video viewer */
+  .player { position: relative; aspect-ratio: 16 / 9; background: #05090D; overflow: hidden;
+            display: flex; align-items: center; justify-content: center; }
+  .player video, .player img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .player .nov { color: var(--slate); font-size: 14px; }
+  .vbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; flex-wrap: wrap; padding: 0 2px; }
+  .vlabel { font-size: 14px; color: var(--slate); }
+  .vlabel b { color: var(--bone); font-weight: 600; }
+  .variants { display: flex; gap: 6px; flex-wrap: wrap; }
+  .sw { width: 36px; height: 36px; padding: 0; border: 2px solid var(--line); background: var(--ink-2); cursor: pointer;
+        overflow: hidden; display: flex; align-items: center; justify-content: center; color: var(--slate);
+        font: 700 11px/1 var(--body); clip-path: var(--clip-sm); transition: border-color .15s, transform .15s; }
+  .sw img { width: 100%; height: 100%; object-fit: cover; }
+  .sw:active { transform: scale(.94); }
+  .sw.on { border-color: var(--red); color: var(--bone); }
+
+  /* status / error */
+  .note { margin-top: 20px; padding: 14px 16px; background: var(--steel); clip-path: var(--clip-sm); border-left: 4px solid var(--red); }
+
+  /* rankings */
+  .intro { color: var(--slate); max-width: 70ch; margin: 18px 0 0; }
+  .tools { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+           padding: 12px 0; margin-top: 18px; background: linear-gradient(var(--ink) 80%, transparent); }
+  .seg { display: flex; background: var(--ink-2); padding: 4px; clip-path: var(--clip-sm); }
+  .seg button, .chip { border: 0; background: none; color: var(--slate); font: 600 15px/1 var(--body); padding: 9px 14px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--bone); color: var(--ink); }
+  .chip { background: var(--ink-2); clip-path: var(--clip-sm); }
+  .chip[aria-pressed="true"] { background: var(--red); color: #fff; }
+  .search { flex: 1 1 200px; min-width: 0; background: var(--ink-2); border: 1px solid var(--line); color: var(--bone);
+            font: 500 15px/1 var(--body); padding: 10px 12px; }
+  .search::placeholder { color: var(--slate); }
+  .rows { list-style: none; margin: 4px 0 0; padding: 0; }
+  .row { --tier: var(--slate); display: grid; grid-template-columns: 64px 92px minmax(0, 1fr) auto 44px; gap: 14px; align-items: center;
+         padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .row .n { font: 900 32px/1 var(--display); color: var(--slate); text-align: right; font-variant-numeric: tabular-nums; }
+  .row.top .n { color: var(--bone); }
+  .row.fav .n { color: var(--red); }
+  .row .thumb { height: 40px; display: flex; align-items: center; justify-content: center; }
+  .row .thumb img { max-width: 100%; max-height: 40px; object-fit: contain; }
+  .row .who { min-width: 0; }
+  .row .who b { display: block; font: 700 17px/1.2 var(--body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .who span { font-size: 13px; color: var(--slate); }
+  .row .tierline { justify-self: end; }
+  .row.cut { border-bottom: 2px solid var(--red); }
+  .play { width: 40px; height: 40px; border: 1px solid var(--line); background: var(--steel); color: var(--bone);
+          cursor: pointer; clip-path: var(--clip-sm); font-size: 13px; transition: background .15s; }
+  .play:hover { background: var(--red); border-color: var(--red); }
+  .empty { color: var(--slate); padding: 24px 0; }
+  dialog { width: min(980px, calc(100vw - 24px)); max-height: calc(100vh - 24px); background: var(--steel); color: var(--bone);
+           border: 0; padding: 14px; clip-path: var(--clip); }
+  dialog::backdrop { background: rgb(5 9 13 / .82); backdrop-filter: blur(3px); }
+  dialog[open] { animation: pop .22s cubic-bezier(.2,.8,.2,1); }
+  @keyframes pop { from { transform: translateY(12px) scale(.98); opacity: 0; } }
+  .dhead { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .dhead h3 { margin: 0; font: 800 28px/1 var(--display); text-transform: uppercase; }
+  .x { background: var(--ink-2); border: 0; color: var(--bone); width: 40px; height: 40px; cursor: pointer; clip-path: var(--clip-sm); font-size: 16px; }
+
+  footer { margin: 56px 0 40px; color: var(--slate); font-size: 14px; max-width: 70ch; }
+
+  @media (max-width: 820px) {
+    .hero { grid-template-columns: 1fr; padding: 24px 20px 22px; gap: 20px; }
+    .grid { grid-template-columns: 1fr; }
+    .lede { font-size: 17px; }
+    .row { grid-template-columns: 44px 64px minmax(0, 1fr) 40px; gap: 10px; }
+    .row .tierline { display: none; }
+    .row .n { font-size: 26px; }
+    .hero.solo { grid-template-columns: 1fr; }
+    .search { order: 3; flex-basis: 100%; }
+    .logo { font-size: 22px; }
+    .sec h2 { font-size: 28px; }
+  }
+  @media (max-width: 440px) {
+    .logo { font-size: 19px; gap: 8px; } .logo i { width: 11px; height: 20px; }
+    .tabs a { padding: 8px 11px; font-size: 14px; }
+  }
+  @media (max-width: 360px) { .wrap { padding: 0 12px; } .tabs a { padding: 7px 9px; } }
+  @media (prefers-reduced-motion: reduce) {
+    .hero::after { display: none; }
+    .verdict span b { transform: none; animation: none; }
+    .card.fav::after { animation: none; }
+    dialog[open] { animation: none; }
+  }
 `;
 
-function shell({ title, active, body }) {
+// Media for the skins on a page, as compact JSON the viewer script reads.
+function mediaJson(skins) {
+  const out = {};
+  for (const s of skins) {
+    if (!s || !s.id || out[s.id]) continue;
+    const v = (s.variants || []).map(x => ({ n: x.name, s: x.swatch, i: x.image, vd: x.video }));
+    if (!v.length && s.icon) v.push({ n: 'Base', s: null, i: s.icon, vd: null });
+    out[s.id] = { n: s.name, v };
+  }
+  return JSON.stringify(out).replace(/</g, '\\u003c');
+}
+
+// Client script: video viewer with variant buttons, live countdowns, rankings filters + preview dialog.
+const CLIENT_JS = `
+(function () {
+  var MEDIA = window.MEDIA || {};
+  var PAGE = window.PAGE || {};
+  var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  function render(box, idx, play) {
+    var m = MEDIA[box.dataset.id]; if (!m || !m.v.length) return;
+    var v = m.v[idx] || m.v[0];
+    var player = box.querySelector('.player');
+    if (v.vd) {
+      player.innerHTML = '<video controls loop muted playsinline preload="metadata"></video>';
+      var vid = player.firstChild; vid.src = v.vd; if (v.i) vid.poster = v.i;
+      if (play) vid.play().catch(function () {});
+    } else if (v.i) {
+      player.innerHTML = '<img alt="">'; player.firstChild.src = v.i; player.firstChild.alt = m.n + ', ' + v.n;
+    } else {
+      player.innerHTML = '<div class="nov">No preview from Riot for this one</div>';
+    }
+    box.querySelector('.vlabel').innerHTML = '<b>' + esc(v.n) + '</b> ' + (v.vd ? 'at max level' : '(render, no video)');
+    box.querySelectorAll('.sw').forEach(function (b, i) { b.classList.toggle('on', i === idx); b.setAttribute('aria-pressed', i === idx); });
+  }
+  function mount(box) {
+    var m = MEDIA[box.dataset.id]; if (!m) return;
+    var bar = box.querySelector('.variants'); bar.innerHTML = '';
+    if (m.v.length > 1) m.v.forEach(function (v, i) {
+      var b = document.createElement('button');
+      b.className = 'sw'; b.type = 'button'; b.title = v.n; b.setAttribute('aria-label', 'Show ' + v.n + ' variant');
+      if (v.s) { var img = document.createElement('img'); img.src = v.s; img.alt = ''; b.appendChild(img); }
+      else b.textContent = i === 0 ? 'Base' : String(i);
+      b.addEventListener('click', function () { render(box, i, true); });
+      bar.appendChild(b);
+    });
+    render(box, 0, false);
+  }
+  document.querySelectorAll('.viewer[data-id]').forEach(mount);
+
+  // Store page: play muted while on screen, pause when scrolled away.
+  var autos = document.querySelectorAll('.viewer[data-auto]');
+  if (!reduce && autos.length && 'IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        var vid = e.target.querySelector('video'); if (!vid) return;
+        if (e.isIntersecting) vid.play().catch(function () {}); else vid.pause();
+      });
+    }, { threshold: 0.5 });
+    autos.forEach(function (a) { io.observe(a); });
+  }
+
+  // Live countdowns.
+  function fmt(ms) {
+    if (ms <= 0) return 'now';
+    var s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+    return d ? d + 'd ' + h + 'h' : h + 'h ' + String(m).padStart(2, '0') + 'm';
+  }
+  function tick() {
+    document.querySelectorAll('[data-until]').forEach(function (el) { el.textContent = fmt(+el.dataset.until - Date.now()); });
+  }
+  tick(); setInterval(tick, 20000);
+
+  // Rankings: tabs, search, filters.
+  var rows = document.querySelectorAll('.row');
+  if (rows.length) {
+    var state = { list: 'gun', q: '', fav: false, top: false };
+    var empty = document.querySelector('.empty');
+    function apply() {
+      var shown = 0;
+      rows.forEach(function (r) {
+        var ok = r.dataset.list === state.list
+          && (!state.q || r.dataset.name.indexOf(state.q) !== -1)
+          && (!state.fav || r.classList.contains('fav'))
+          && (!state.top || r.classList.contains('top'));
+        r.hidden = !ok; if (ok) shown++;
+      });
+      if (empty) empty.hidden = shown > 0;
+    }
+    document.querySelectorAll('.seg button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        state.list = b.dataset.list;
+        document.querySelectorAll('.seg button').forEach(function (x) { x.setAttribute('aria-pressed', x === b); });
+        apply();
+      });
+    });
+    document.querySelectorAll('.chip').forEach(function (c) {
+      c.addEventListener('click', function () {
+        var on = c.getAttribute('aria-pressed') !== 'true';
+        c.setAttribute('aria-pressed', on); state[c.dataset.f] = on; apply();
+      });
+    });
+    var search = document.querySelector('.search');
+    if (search) search.addEventListener('input', function () { state.q = search.value.trim().toLowerCase(); apply(); });
+    apply();
+  }
+
+  // Rankings: preview dialog.
+  var dlg = document.getElementById('dlg');
+  if (dlg) {
+    var box = dlg.querySelector('.viewer');
+    document.querySelectorAll('.play[data-id]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        box.dataset.id = btn.dataset.id;
+        dlg.querySelector('h3').textContent = (MEDIA[btn.dataset.id] || {}).n || '';
+        mount(box); dlg.showModal();
+        var vid = box.querySelector('video'); if (vid && !reduce) vid.play().catch(function () {});
+      });
+    });
+    function stop() { var vid = box.querySelector('video'); if (vid) vid.pause(); }
+    dlg.querySelector('.x').addEventListener('click', function () { stop(); dlg.close(); });
+    dlg.addEventListener('click', function (e) { if (e.target === dlg) { stop(); dlg.close(); } });
+    dlg.addEventListener('close', stop);
+  }
+})();
+`;
+
+function shell({ title, active, body, media = '{}', page = {} }) {
   const updated = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Riyadh', dateStyle: 'medium', timeStyle: 'short' });
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0F1923">
 <title>${esc(title)}</title>
+${FONTS}
 <style>${STYLE}</style>
 </head>
 <body>
-<main>
-  <header>
-    <h1>Store <span>Watch</span></h1>
-    <nav><a href="./" class="${active === 'store' ? 'on' : ''}">Today</a><a href="rankings.html" class="${active === 'rank' ? 'on' : ''}">Rankings</a></nav>
-  </header>
+<div class="wrap">
+  <nav class="bar" aria-label="Main">
+    <a class="logo" href="./"><i aria-hidden="true"></i>Store Watch</a>
+    <div class="tabs"><a href="./"${active === 'store' ? ' class="on" aria-current="page"' : ''}>Today</a><a href="rankings.html"${active === 'rank' ? ' class="on" aria-current="page"' : ''}>Rankings</a></div>
+  </nav>
+  <main>
   ${body}
-  <footer>Updated ${esc(updated)} (Qatar/Riyadh time). Store resets daily at 3:00 AM. Checked every 2 hours.</footer>
-</main>
+  </main>
+  <footer>Last checked ${esc(updated)}, Qatar time. Checks run every 2 hours and the store resets at 3:00 AM. Videos show each skin fully upgraded.</footer>
+</div>
+<script>window.MEDIA = ${media}; window.PAGE = ${JSON.stringify(page)};</script>
+<script>${CLIENT_JS}</script>
 </body>
 </html>`;
 }
 
+const viewerHtml = (id, auto) => `
+      <div class="viewer" data-id="${esc(id)}"${auto ? ' data-auto="1"' : ''}>
+        <div class="player"></div>
+        <div class="vbar"><span class="vlabel"></span><div class="variants" role="group" aria-label="Variants"></div></div>
+      </div>`;
+
+const tierLine = (s, heart = true) => `<span class="tierline">${s.tierIcon ? `<img src="${esc(s.tierIcon)}" alt="">` : ''}${heart && s.favourite ? '<span class="heart" aria-label="Favourite">❤</span>' : ''}${esc(s.tier)}${s.weapon === 'Melee' ? ' melee' : ''}</span>`;
+
 function card(s) {
-  const colour = TIER_COLOUR[s.tier] || '#8a8f98';
-  const top = TOP.has(s.tier);
+  const colour = TIER_COLOUR[s.tier] || '#7B8590';
   const price = s.was
-    ? `<span class="price">${s.price} VP</span> <s>${s.was}</s> <span class="off">-${s.discount}%</span>`
-    : `<span class="price">${s.price} VP</span>`;
+    ? `${s.price} VP<small><s>${s.was}</s> <span class="off">${s.discount}% off</span></small>`
+    : `${s.price} VP`;
   const rank = s.rank
-    ? `<div class="rank">Rank <b>#${s.rank}</b> ${listName(s)}${s.rated ? '' : ' (no vote data)'}</div>`
-    : '';
+    ? `<span class="rankchip"><b>#${s.rank}</b>${listName(s)}${s.rated ? '' : ', no vote data'}</span>`
+    : '<span class="rankchip">Not ranked</span>';
   return `
-    <article class="card${top ? ' top' : ''}${s.favourite ? ' fav' : ''}" style="--tier:${colour}">
-      <div class="art">${s.icon ? `<img src="${esc(s.icon)}" alt="" loading="lazy">` : ''}</div>
-      <div class="meta">
-        <div class="tier">${s.favourite ? '<span class="heart">❤ </span>' : top ? '★ ' : ''}${esc(s.tier)}${s.weapon === 'Melee' ? ' · Melee' : ''}</div>
-        <h3>${esc(s.name)}</h3>
-        <div>${price}</div>
+    <article class="card${s.favourite ? ' fav' : ''}" style="--tier:${colour}">
+      ${viewerHtml(s.id, true)}
+      <div class="info">
+        <div>${tierLine(s)}<h3>${esc(s.name)}</h3></div>
+        <div class="price">${price}</div>
         ${rank}
       </div>
     </article>`;
 }
 
-function storePage(store) {
-  const favs = [...store.daily, ...store.night].filter(s => s.favourite);
-  const tops = [...store.daily, ...store.night].filter(s => s.rank !== null);
-  const status = favs.length
-    ? `<div class="status fav"><strong>❤ Favourite in your store: ${esc(favs.map(s => s.name).join(', '))}</strong></div>`
-    : tops.length
-      ? `<div class="status hit"><strong>★ ${tops.length} top-tier skin${tops.length > 1 ? 's' : ''} today.</strong> Best: #${Math.min(...tops.map(s => s.rank))}.</div>`
-      : `<div class="status">Nothing Ultra or Exclusive today. Keep waiting.</div>`;
-  let body = `${status}
-  <h2><span>Daily store</span><span>refreshes in ${fmtDuration(store.dailyLeft)}</span></h2>
-  <div class="grid">${store.daily.map(card).join('')}</div>`;
-  if (store.night.length) {
-    body += `<h2><span>Night Market</span><span>ends in ${fmtDuration(store.nightLeft)}</span></h2>
-  <div class="grid">${store.night.map(card).join('')}</div>`;
-  }
-  return shell({ title: 'Store Today', active: 'store', body });
+// Picks the skin to feature in the hero: a favourite, else the best-ranked, else the first.
+function featured(items) {
+  return items.find(s => s.favourite)
+    || items.filter(s => s.rank !== null).sort((a, b) => a.rank - b.rank)[0]
+    || items[0];
 }
 
-function rankTable(list, label) {
-  const rows = list.map(s => `
-      <tr class="${s.rank <= R.TOP_RANK ? 'top50' : ''}${s.favourite ? ' fav' : ''}${s.rank === R.TOP_RANK ? ' cut' : ''}">
-        <td class="n">${s.rank}</td>
-        <td>${s.favourite ? '<span class="heart">❤ </span>' : ''}${esc(s.name)}${s.rated ? '' : ' <span class="muted">(no vote data)</span>'}</td>
-        <td class="t" style="color:${TIER_COLOUR[s.tier]}">${esc(s.tier)}</td>
-        <td class="c muted">${esc(s.collection)}</td>
-      </tr>`).join('');
-  return `<h2><span>${label}</span><span>${list.length} skins</span></h2>
-  <table><thead><tr><th>#</th><th>Skin</th><th>Tier</th><th class="c">Collection</th></tr></thead><tbody>${rows}</tbody></table>`;
+function storePage(store) {
+  const now = Date.now();
+  const resetAt = now + store.dailyLeft * 1000;
+  const nightEndAt = now + store.nightLeft * 1000;
+  const all = [...store.daily, ...store.night];
+  const favs = all.filter(s => s.favourite);
+  const tops = all.filter(s => s.rank !== null);
+  const pick = featured(all);
+
+  let lines, lede, cls = '';
+  if (favs.length) {
+    cls = ' fav';
+    lines = ["It's", 'here.'];
+    lede = `<strong>${esc(favs.map(s => s.name).join(' and '))}</strong> ${favs.length > 1 ? 'are' : 'is'} in your ${store.night.includes(favs[0]) ? 'Night Market' : 'store'}. One of your favourites.`;
+  } else if (tops.length) {
+    const best = tops.sort((a, b) => a.rank - b.rank)[0];
+    lines = ['Worth a', 'look.'];
+    lede = `<strong>${esc(best.name)}</strong> is #${best.rank} on the ${listName(best)} rankings${tops.length > 1 ? `, and ${tops.length - 1} more top-tier skin${tops.length > 2 ? 's are' : ' is'} in today` : ''}.`;
+  } else {
+    lines = ['Keep', 'waiting.'];
+    lede = 'Nothing Exclusive or Ultra in your store today.';
+  }
+
+  const hero = `
+  <section class="hero${cls}" aria-label="Today's verdict">
+    <div>
+      <h1 class="verdict">${lines.map(l => `<span><b>${esc(l)}</b></span>`).join('')}</h1>
+      <p class="lede">${lede}</p>
+      <div class="clock"><b data-until="${resetAt}">${fmtDuration(store.dailyLeft)}</b><small>until the store resets</small></div>
+    </div>
+    ${pick ? `<div class="feature">${viewerHtml(pick.id, true)}<p class="name">${esc(pick.name)}</p></div>` : ''}
+  </section>`;
+
+  let body = `${hero}
+  <div class="sec"><h2>Your store</h2><span class="meta">New skins in <b data-until="${resetAt}">${fmtDuration(store.dailyLeft)}</b></span></div>
+  <div class="grid">${store.daily.map(card).join('')}</div>`;
+  if (store.night.length) {
+    body += `
+  <div class="sec"><h2>Night Market</h2><span class="meta">Ends in <b data-until="${nightEndAt}">${fmtDuration(store.nightLeft)}</b></span></div>
+  <div class="grid">${store.night.map(card).join('')}</div>`;
+  }
+  return shell({ title: 'Store Watch', active: 'store', body, media: mediaJson(all) });
+}
+
+function rankRow(s) {
+  const colour = TIER_COLOUR[s.tier] || '#7B8590';
+  const cls = ['row', s.rank <= R.TOP_RANK ? 'top' : '', s.favourite ? 'fav' : '', s.rank === R.TOP_RANK ? 'cut' : ''].filter(Boolean).join(' ');
+  return `
+      <li class="${cls}" data-list="${s.list}" data-name="${esc(s.name.toLowerCase())}" style="--tier:${colour}">
+        <span class="n">${s.rank}</span>
+        <span class="thumb">${s.icon ? `<img src="${esc(s.icon)}" alt="" loading="lazy">` : ''}</span>
+        <span class="who"><b>${s.favourite ? '<span class="heart" aria-label="Favourite">❤ </span>' : ''}${esc(s.name)}</b><span>${esc(s.collection)}${s.rated ? '' : ', no vote data'}</span></span>
+        ${tierLine(s, false)}
+        <button class="play" type="button" data-id="${esc(s.id)}" aria-label="Preview ${esc(s.name)}">▶</button>
+      </li>`;
 }
 
 function rankingsPage(ranking) {
   const body = `
-  <p class="muted">Every Exclusive and Ultra skin in the game, from live game data. Guns are ranked together; knives separately.
-  Ranks 1–${R.TOP_RANK} (above the red line) get reminded twice a day. ❤ = your favourites (urgent alerts + last-chance ping).
-  "No vote data" = not in any vote dataset yet; sits mid-table until it is.</p>
-  ${rankTable(ranking.guns, 'Guns')}
-  ${rankTable(ranking.knives, 'Knives')}`;
-  return shell({ title: 'Skin Rankings', active: 'rank', body });
+  <section class="hero solo" aria-label="Rankings">
+    <h1 class="verdict"><span><b>The rankings.</b></span></h1>
+    <p class="lede">Every Exclusive and Ultra skin, ranked from community vote data. Guns are ranked together and knives separately.</p>
+    <div><p class="lede">Ranks 1 to ${R.TOP_RANK} get two reminders a day when they show up in your store. Your favourites get urgent alerts and a last-chance ping. Press ▶ on any skin to watch it fully upgraded, in every variant.</p></div>
+  </section>
+  <div class="tools">
+    <div class="seg" role="group" aria-label="Weapon type">
+      <button type="button" data-list="gun" aria-pressed="true">Guns ${ranking.guns.length}</button>
+      <button type="button" data-list="knife" aria-pressed="false">Knives ${ranking.knives.length}</button>
+    </div>
+    <input class="search" type="search" placeholder="Search skins" aria-label="Search skins">
+    <button class="chip" type="button" data-f="fav" aria-pressed="false">❤ Favourites</button>
+    <button class="chip" type="button" data-f="top" aria-pressed="false">Top ${R.TOP_RANK}</button>
+  </div>
+  <ol class="rows">${[...ranking.guns, ...ranking.knives].map(rankRow).join('')}</ol>
+  <p class="empty" hidden>No skins match. Clear the search or filters.</p>
+  <dialog id="dlg" aria-label="Skin preview">
+    <div class="dhead"><h3></h3><button class="x" type="button" aria-label="Close preview">✕</button></div>
+    ${viewerHtml('', false)}
+  </dialog>`;
+  return shell({ title: 'Rankings · Store Watch', active: 'rank', body, media: mediaJson([...ranking.guns, ...ranking.knives]) });
 }
 
 function errorPage(message) {
   return shell({
-    title: 'Store Today', active: 'store',
-    body: `<div class="status err"><strong>Couldn't check the store right now.</strong><br>${esc(message)}</div>`,
+    title: 'Store Watch', active: 'store',
+    body: `
+  <section class="hero solo" aria-label="Status">
+    <h1 class="verdict"><span><b>Check failed.</b></span></h1>
+    <p class="lede">${esc(message)}</p>
+    <div><p class="lede">The bot tries again every 2 hours. If this is a login problem, paste a fresh cookie line into the RIOT_SSID secret on GitHub.</p></div>
+  </section>`,
   });
 }
 

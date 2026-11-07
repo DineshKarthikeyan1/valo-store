@@ -1,0 +1,46 @@
+# Put this file in your repo at:  .github/workflows/store.yml
+name: Daily store
+
+on:
+  schedule:
+    - cron: '7 0 * * *'   # 00:07 UTC = 3:07 AM Riyadh, just after the store resets
+  workflow_dispatch:      # lets you run it manually from the Actions tab
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check store
+        run: node check-store.js
+        env:
+          RIOT_SSID: ${{ secrets.RIOT_SSID }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SHARD: ap
+          PAGE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

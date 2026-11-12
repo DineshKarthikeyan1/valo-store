@@ -21,12 +21,14 @@ const OWNED = [
   'Nocturnum Phantom',
   'Forsaken Guardian',
   'PRX 25 Classic',
+  'Evori Dreamwings Spectre',
+  'Aeris Vandal',
 ];
 
 // ---- Guns you don't own a Premium-or-better skin for yet ----
 // Any Premium, Exclusive or Ultra skin for these gets flagged and pinged once, even if it isn't top-ranked.
 // Remove a gun from this list once you've bought a skin for it.
-const NEED_GUNS = ['Shorty', 'Frenzy', 'Ghost', 'Spectre', 'Judge', 'Bucky', 'Bandit', 'Outlaw',
+const NEED_GUNS = ['Shorty', 'Frenzy', 'Ghost', 'Judge', 'Bucky', 'Bandit', 'Outlaw',
   'Bulldog', 'Marshal', 'Operator', 'Warden'];
 const GAP_TIERS = new Set(['Premium', 'Exclusive', 'Ultra']);
 
@@ -41,13 +43,13 @@ const LAST_CALL_H = 3;      // favourites also get a last-chance ping this close
 
 // Your S tier, in your head-to-head order (best first).
 const S_ORDER = ['Ayakashi', 'Radiant Entertainment System', 'Spectrum', 'ORA',
-  'Prelude to Chaos', 'Kuronami', 'RGX 11z Pro'];
+  'Prelude to Chaos', 'Kuronami', 'Aeris', 'RGX 11z Pro'];
 
 const YOUR_TIERS = {
   // A+
-  'Elderflame': 'A+', 'Neo Frontier': 'A+', 'Bubblegum Deathwish': 'A+',
+  'Elderflame': 'A+', 'Neo Frontier': 'A+', 'Bubblegum Deathwish': 'A+', 'Evori Dreamwings': 'A+',
   // A, leaning to the top
-  'Evori Dreamwings': 'A^', 'Aeris': 'A^', 'EX.O': 'A^', 'Doombringer': 'A^',
+  'EX.O': 'A^', 'Doombringer': 'A^',
   'Popmonz': 'A^', 'Phaseguard': 'A^',
   // A
   'Primordium': 'A', 'Singularity': 'A', 'Imperium': 'A', 'Mystbloom': 'A',
@@ -234,6 +236,10 @@ function isFavourite(themeName, skinName) {
   });
 }
 
+// Riot sometimes uses short names ("RES Phantom"). Expand them so matching never misses.
+const ALIASES = [[/^\s*RES\b/i, 'Radiant Entertainment System']];
+const canon = str => ALIASES.reduce((acc, [re, full]) => acc.replace(re, full), String(str || ''));
+
 const lookupByPrefix = (table, name) => {
   const n = norm(name);
   const hit = Object.entries(table).find(([k]) => n.startsWith(norm(k)));
@@ -245,7 +251,8 @@ const lookupByPrefix = (table, name) => {
 function rankSkins(skins) {
   const scored = skins
     .filter(s => s.weapon !== 'Melee' && !EVENT_ONLY.test(`${s.theme || ''} ${s.name}`))
-    .map(s => {
+    .map(orig => {
+      const s = { ...orig, name: canon(orig.name), theme: canon(orig.theme) };
       const collection = findCollection(s.theme, s.name);
       const skinTier = lookupByPrefix(SKIN_TIERS, s.name);
       const colTier = collection && YOUR_TIERS[collection] ? YOUR_TIERS[collection] : null;
@@ -257,8 +264,8 @@ function rankSkins(skins) {
       const score = WEIGHT_FLOOR + (base - WEIGHT_FLOOR) * w;
       const tierKey = skinTier || colTier;
       return {
-        ...s,
-        collection: collection || s.theme || '',
+        ...orig,
+        collection: collection || orig.theme || '',
         rated: Boolean(tierKey) || (Boolean(collection) && COLLECTIONS[collection] !== NO_VOTE_DATA),
         yourTier: tierKey ? TIER_LABEL[tierKey] : null,
         favourite: isFavourite(s.theme, s.name),
